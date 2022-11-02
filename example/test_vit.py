@@ -23,6 +23,7 @@ def parse_args():
 
     #----------------------------------------------------------#
     parser.add_argument("--fs", action='store_true')
+    parser.add_argument("--data_path", type=str, default='')
     #----------------------------------------------------------#
     
 

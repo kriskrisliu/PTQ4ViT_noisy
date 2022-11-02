@@ -24,7 +24,7 @@ def test_all(name, cfg_modifier=lambda x: x, calib_size=32, config_name="PTQ4ViT
 
     wrapped_modules=net_wrap.wrap_modules_in_net(net,quant_cfg)
 
-    g=datasets.ViTImageNetLoaderGenerator('/data-hdd/ImageNet 2012 DataSets/','imagenet',32,32,16, kwargs={"model":net})
+    g=datasets.ViTImageNetLoaderGenerator(args.data_path,'imagenet',32,32,16, kwargs={"model":net})
     test_loader=g.test_loader()
     calib_loader=g.calib_loader(num=calib_size)
     _names = ['n_G_A', 'n_V_A', 'n_H_A', 'n_G_B', 'n_V_B', 'n_H_B', 'crb_groups_A', 'crb_groups_B', 'crb_rows_A', 'crb_cols_A', 'crb_rows_B', 'crb_cols_B']
