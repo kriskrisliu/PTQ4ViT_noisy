@@ -30,6 +30,11 @@ class MinMaxQuantLinear(nn.Linear):
         self.a_qmax=2**(self.a_bit-1)
         self.bias_correction = bias_correction
 
+        self.noise = torch.rand(size=(1,self.weight.data.size(-1))).cuda()
+        self.noise = (self.noise-0.5)*2
+        self.noiseScale = 0.0
+        self.static = 0.0
+
     def forward(self, x):
         if self.mode=='raw':
             out=F.linear(x, self.weight, self.bias)
@@ -62,7 +67,9 @@ class MinMaxQuantLinear(nn.Linear):
     def quant_forward(self,x):
         assert self.calibrated is not None,f"You should run calibrate_forward before run quant_forward for {self}"
         w_sim,bias_sim=self.quant_weight_bias()
+        x += self.noise*self.noiseScale+self.static
         x_sim=self.quant_input(x)
+        x_sim -= self.noise*self.noiseScale-self.static
         out=F.linear(x_sim, w_sim, bias_sim)
         return out
     
@@ -541,6 +548,7 @@ class PTQSLBatchingQuantLinear(PTQSLQuantLinear):
         self._initialize_intervals()
 
         # prepare weight intervals and similarities
+        # weight_interval_candidates = torch.tensor([1.0 for i in range(self.eq_n + 1)]).cuda().view(-1,1,1,1,1) * self.w_interval.unsqueeze(0) # shape: eq_n,n_V,1,n_H,1
         weight_interval_candidates = torch.tensor([self.eq_alpha + i*(self.eq_beta - self.eq_alpha)/self.eq_n for i in range(self.eq_n + 1)]).cuda().view(-1,1,1,1,1) * self.w_interval.unsqueeze(0) # shape: eq_n,n_V,1,n_H,1
         input_interval_candidates =  torch.tensor([self.eq_alpha + i*(self.eq_beta - self.eq_alpha)/self.eq_n for i in range(self.eq_n + 1)]).cuda().view(1,1,-1) * self.a_interval.unsqueeze(-1) # shape: n_a,1,eq_n
         for e in range(self.search_round):

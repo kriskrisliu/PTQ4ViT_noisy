@@ -567,6 +567,9 @@ class PTQSLBatchingQuantMatMul(PTQSLQuantMatMul):
         self._initialize_intervals()
         A_interval_candidates = torch.tensor([self.eq_alpha + i*(self.eq_beta - self.eq_alpha)/self.eq_n for i in range(self.eq_n + 1)]).cuda().view(-1,1,1,1,1,1,1,1) * self.A_interval.unsqueeze(0)
         B_interval_candidates = torch.tensor([self.eq_alpha + i*(self.eq_beta - self.eq_alpha)/self.eq_n for i in range(self.eq_n + 1)]).cuda().view(-1,1,1,1,1,1,1,1) * self.B_interval.unsqueeze(0)
+        # import pdb;pdb.set_trace()
+        # A_interval_candidates = torch.tensor([ii/10 for ii in range(2,20)]+[1]*83).cuda().view(-1,1,1,1,1,1,1,1) * self.A_interval.unsqueeze(0)
+        # B_interval_candidates = torch.tensor([ii/10 for ii in range(2,20)]+[1]*83).cuda().view(-1,1,1,1,1,1,1,1) * self.B_interval.unsqueeze(0)
         for e in range(self.search_round):
             # search for best A interval
             self._search_best_A_interval(A_interval_candidates)

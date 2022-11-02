@@ -22,18 +22,60 @@ def test_all(name, cfg_modifier=lambda x: x, calib_size=32, config_name="PTQ4ViT
     net = get_net(name)
 
     wrapped_modules=net_wrap.wrap_modules_in_net(net,quant_cfg)
-    
-    g=datasets.ViTImageNetLoaderGenerator('/datasets/imagenet','imagenet',32,32,16, kwargs={"model":net})
+
+    g=datasets.ViTImageNetLoaderGenerator('/data-hdd/ImageNet 2012 DataSets/','imagenet',32,32,16, kwargs={"model":net})
     test_loader=g.test_loader()
     calib_loader=g.calib_loader(num=calib_size)
-    
+    _names = ['n_G_A', 'n_V_A', 'n_H_A', 'n_G_B', 'n_V_B', 'n_H_B', 'crb_groups_A', 'crb_groups_B', 'crb_rows_A', 'crb_cols_A', 'crb_rows_B', 'crb_cols_B']
+
     # add timing
     calib_start_time = time.time()
-    quant_calibrator = HessianQuantCalibrator(net,wrapped_modules,calib_loader,sequential=False,batch_size=4) # 16 is too big for ViT-L-16
-    quant_calibrator.batching_quant_calib()
+    # quant_calibrator = HessianQuantCalibrator(net,wrapped_modules,calib_loader,sequential=False,batch_size=4) # 16 is too big for ViT-L-16
+    # quant_calibrator.batching_quant_calib()
     calib_end_time = time.time()
 
-    acc = test_classification(net,test_loader, description=quant_cfg.ptqsl_linear_kwargs["metric"])
+    # savings = {}
+    # for name0,module in net.named_modules():
+    #     if hasattr(module,'w_interval'):
+    #         savings[name0] = {"w_interval":module.w_interval, "a_interval":module.a_interval}
+    #     if hasattr(module,'A_interval'):
+    #         # pad_groups_A': 0, 'pad_groups_B': 0, 'pad_rows_A': 0, 'pad_rows_B': 0, 'pad_cols_A': 0, 'pad_cols_B': 0
+    #         savings[name0] = {"A_interval":module.A_interval, "B_interval":module.B_interval,
+    #                           "pad_groups_A":module.pad_groups_A,"pad_groups_B":module.pad_groups_B,
+    #                           "pad_rows_A":module.pad_rows_A,"pad_rows_B":module.pad_rows_B,
+    #                           "pad_cols_A":module.pad_cols_A,"pad_cols_B":module.pad_cols_B}
+    #         for _n in _names:
+    #             savings[name0][_n] = getattr(module,_n)
+    # torch.save(savings, 'vit_small_patch16_224.pth')
+    savings = torch.load("vit_small_patch16_224.pth")
+    # import ipdb; ipdb.set_trace()
+    net0 = get_net(name)
+    wrapped_modules0=net_wrap.wrap_modules_in_net(net0,quant_cfg)
+    for name0,module in net0.named_modules():
+        if hasattr(module,'w_interval'):
+            print(name0)
+            setattr(module,"w_interval", savings[name0]["w_interval"])
+            setattr(module,"a_interval", savings[name0]["a_interval"])
+        elif hasattr(module,'A_interval'):
+            print(name0)
+            setattr(module,"A_interval", savings[name0]["A_interval"])
+            setattr(module,"B_interval", savings[name0]["B_interval"])
+            setattr(module,"pad_groups_A", savings[name0]["pad_groups_A"])
+            setattr(module,"pad_groups_B", savings[name0]["pad_groups_B"])
+            setattr(module,"pad_rows_A", savings[name0]["pad_rows_A"])
+            setattr(module,"pad_rows_B", savings[name0]["pad_rows_B"])
+            setattr(module,"pad_cols_A", savings[name0]["pad_cols_A"])
+            setattr(module,"pad_cols_B", savings[name0]["pad_cols_B"])
+            for _n in _names:
+                setattr(module,_n, savings[name0][_n])
+        else:
+            continue
+        module.mode = "quant_forward"
+        module.calibrated = True
+    # import ipdb; ipdb.set_trace()
+    acc = test_classification(net0,test_loader, description=quant_cfg.ptqsl_linear_kwargs["metric"])
+
+    # acc = test_classification(net,test_loader, description=quant_cfg.ptqsl_linear_kwargs["metric"])
 
     print(f"model: {name} \n")
     print(f"calibration size: {calib_size} \n")
@@ -81,27 +123,30 @@ if __name__=='__main__':
     args = parse_args()
 
     names = [
-        "vit_tiny_patch16_224",
-        "vit_small_patch32_224",
+        # "vit_tiny_patch16_224",
+        # "vit_small_patch32_224",
         "vit_small_patch16_224",
-        "vit_base_patch16_224",
-        "vit_base_patch16_384",
-
-        "deit_tiny_patch16_224",
-        "deit_small_patch16_224",
-        "deit_base_patch16_224",
-        "deit_base_patch16_384",
-
-        "swin_tiny_patch4_window7_224",
-        "swin_small_patch4_window7_224",
-        "swin_base_patch4_window7_224",
-        "swin_base_patch4_window12_384",
+        # "vit_base_patch16_224",
+        # "vit_base_patch16_384",
+        #
+        # "deit_tiny_patch16_224",
+        # "deit_small_patch16_224",
+        # "deit_base_patch16_224",
+        # "deit_base_patch16_384",
+        #
+        # "swin_tiny_patch4_window7_224",
+        # "swin_small_patch4_window7_224",
+        # "swin_base_patch4_window7_224",
+        # "swin_base_patch4_window12_384",
         ]
     metrics = ["hessian"]
     linear_ptq_settings = [(1,1,1)] # n_V, n_H, n_a
-    calib_sizes = [32,128]
-    bit_settings = [(8,8), (6,6)] # weight, activation
-    config_names = ["PTQ4ViT", "BasePTQ"]
+    # calib_sizes = [32,128]
+    calib_sizes = [4]
+    # bit_settings = [(8,8), (6,6)] # weight, activation
+    bit_settings = [(6,6)] # weight, activation
+    # config_names = ["PTQ4ViT", "BasePTQ"]
+    config_names = ["PTQ4ViT"]
 
     cfg_list = []
     for name, metric, linear_ptq_setting, calib_size, bit_setting, config_name in product(names, metrics, linear_ptq_settings, calib_sizes, bit_settings, config_names):
