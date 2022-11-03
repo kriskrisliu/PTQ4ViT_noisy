@@ -1,3 +1,4 @@
+from faulthandler import disable
 import sys
 sys.path.insert(0,'..')
 sys.path.insert(0,'.')
@@ -24,19 +25,23 @@ def parse_args():
     #----------------------------------------------------------#
     parser.add_argument("--fs", action='store_true')
     parser.add_argument("--data_path", type=str, default='')
+    parser.add_argument("--model", type=str, default='None')
+    parser.add_argument("--calib_num", type=int, default=32)
+    parser.add_argument("--method", type=str, default='None')
+    parser.add_argument("--metric", type=str, default='mse')
     #----------------------------------------------------------#
     
 
     args = parser.parse_args()
     return args
 
-def test_classification(net,test_loader,max_iteration=None, description=None):
+def test_classification(net,test_loader,max_iteration=None, description=None,disable=False):
     pos=0
     tot=0
     i = 0
     max_iteration = len(test_loader) if max_iteration is None else max_iteration
     with torch.no_grad():
-        q=tqdm(test_loader, desc=description)
+        q=tqdm(test_loader, desc=description,disable=disable)
         for inp,target in q:
             i+=1
             inp=inp.cuda()
@@ -48,7 +53,7 @@ def test_classification(net,test_loader,max_iteration=None, description=None):
             q.set_postfix({"acc":pos/tot})
             if i >= max_iteration:
                 break
-    print(pos/tot)
+    # print(pos/tot)
     return pos/tot
 
 def process(pid, experiment_process, args_queue, n_gpu):

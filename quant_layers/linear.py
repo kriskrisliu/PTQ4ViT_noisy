@@ -67,9 +67,9 @@ class MinMaxQuantLinear(nn.Linear):
     def quant_forward(self,x):
         assert self.calibrated is not None,f"You should run calibrate_forward before run quant_forward for {self}"
         w_sim,bias_sim=self.quant_weight_bias()
-        x += self.noise*self.noiseScale+self.static
+        x = x + self.noise*self.noiseScale+self.static
         x_sim=self.quant_input(x)
-        x_sim -= self.noise*self.noiseScale-self.static
+        x_sim = x_sim - self.noise*self.noiseScale-self.static
         out=F.linear(x_sim, w_sim, bias_sim)
         return out
     
@@ -523,6 +523,7 @@ class PTQSLBatchingQuantLinear(PTQSLQuantLinear):
                     x_sim = x_sim.permute(*list(range(len(x_sim.shape)-3)),-1,-3,-2).reshape(*x.shape[:-1],p_ed-p_st,x.shape[-1]) # shape: b,*,parallel_eq_n,ic
                     # calculate similarity and store them
                     out_sim = F.linear(x_sim, w_sim, bias_sim) # shape: b,*,parallel_eq_n,oc
+                    # import ipdb;ipdb.set_trace()
                     if self.metric != "pearson":
                         similarity = self._get_similarity(raw_out_expanded, out_sim, self.metric, raw_grad) # shape: b,*,parallel_eq_n
                         if len(similarity.shape) > 2:
@@ -559,7 +560,7 @@ class PTQSLBatchingQuantLinear(PTQSLQuantLinear):
 
         self.calibrated = True
         # self._bias_correction_quant_forward(self.raw_input.cuda()) # debugging
-        del self.raw_input, self.raw_out, self.raw_grad
+        del self.raw_input, self.raw_out#, self.raw_grad
         return None
 
 class PostGeluPTQSLBatchingQuantLinear(PTQSLBatchingQuantLinear):

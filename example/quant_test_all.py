@@ -21,7 +21,16 @@ def test_all(name, cfg_modifier=lambda x: x, calib_size=32, config_name="PTQ4ViT
     quant_cfg = cfg_modifier(quant_cfg)
 
     net = get_net(name)
+    net.eval()
 
+    print(f"model: {name} \n")
+    print(f"calibration size: {calib_size} \n")
+    print(f"bit settings: {quant_cfg.bit} \n")
+    print(f"config: {config_name} \n")
+    print(f"ptqsl_conv2d_kwargs: {quant_cfg.ptqsl_conv2d_kwargs} \n")
+    print(f"ptqsl_linear_kwargs: {quant_cfg.ptqsl_linear_kwargs} \n")
+    print(f"ptqsl_matmul_kwargs: {quant_cfg.ptqsl_matmul_kwargs} \n")
+    
     wrapped_modules=net_wrap.wrap_modules_in_net(net,quant_cfg)
 
     g=datasets.ViTImageNetLoaderGenerator(args.data_path,'imagenet',32,32,16, kwargs={"model":net})
@@ -37,6 +46,7 @@ def test_all(name, cfg_modifier=lambda x: x, calib_size=32, config_name="PTQ4ViT
     calib_end_time = time.time()
 
     if args.fs:
+        # import ipdb; ipdb.set_trace()
         savings = {}
         for name0,module in net.named_modules():
             if hasattr(module,'w_interval'):
@@ -80,7 +90,7 @@ def test_all(name, cfg_modifier=lambda x: x, calib_size=32, config_name="PTQ4ViT
                 continue
             module.mode = "quant_forward"
             module.calibrated = True
-
+    net0.eval()
     #-----------------------
     # noise search
     global feats
@@ -89,13 +99,19 @@ def test_all(name, cfg_modifier=lambda x: x, calib_size=32, config_name="PTQ4ViT
     fixed_noise_dict = {}
     static_best_dict = {}
     criterion = torch.nn.MSELoss()
-    config = extra_config[f"{name}-6bit-noise"]
+    config = extra_config.get(f"{name}-6bit-noise",{})
+    if config == {}:
+        for n0,m0 in net0.named_modules():
+            if isinstance(m0, MinMaxQuantLinear):
+                config[n0]=0.0
     for iii, (_n,_num) in enumerate(config.items()):
+        # if _n.endswith("fc2"):
+        #     continue
         for __n,__m in net0.named_modules():
             if __n==_n:
                 h = __m.register_forward_hook(hook)
                 break
-        acc = test_classification(net0,calib_loader, description=quant_cfg.ptqsl_linear_kwargs["metric"])
+        acc = test_classification(net0,calib_loader, description=quant_cfg.ptqsl_linear_kwargs["metric"],disable=True)
         module0 = feats["module"]
         input = feats["input"][0]
         output = feats["output"]
@@ -103,25 +119,30 @@ def test_all(name, cfg_modifier=lambda x: x, calib_size=32, config_name="PTQ4ViT
         a_qmax = module0.a_qmax
         a_interval = module0.a_interval.flatten()[0]
         output_fp = F.linear(torch.clamp(input,-a_qmax*a_interval, (a_qmax-1)*a_interval), w_sim,bias_sim)
-        
+        raw_grad = module0.raw_grad.cuda()#.reshape_as(tensor_raw)
         # static ---------------------------------------#
-        # loss_lowest = 999999
-        # static_best = 0.
-        # for ii in [ii for ii in range(151)]+[-ii for ii in range(1,151)]:
-        #     scale = ii/100.*a_interval
-        #     x_sim=module0.quant_input(input + scale)
-        #     out=F.linear(x_sim - scale, w_sim, bias_sim)
-        #     loss = (criterion(out, output_fp)*1000).detach().cpu()
-        #     if loss<loss_lowest:
-        #         loss_lowest = loss
-        #         static_best = scale
-        #     print(f"[{iii}/{len(config)}]-[{ii}/150] layer={_n}, lossx1000={loss:.4f}, static={scale:.4f}, "
-        #           "calib_size={calib_size}")
-        # static_best_dict[_n] = round(float(static_best),4)
-        # load_static(model=net0,layername=_n,static=static_best)
+        loss_lowest = 999999
+        static_best = 0.
+        for ii in [ii for ii in range(151)]+[-ii for ii in range(1,151)]:
+            scale = ii/100.*a_interval
+            x_sim=module0.quant_input(input + scale)
+            out=F.linear(x_sim - scale, w_sim, bias_sim)
+            if args.metric=="mse":
+                loss = (criterion(out, output_fp)*1000).detach().cpu()
+            else:
+                loss = (raw_grad * (output_fp - out)) ** 2
+                loss = loss.mean()
+            # 
+            if loss<loss_lowest:
+                loss_lowest = loss
+                static_best = scale
+            # print(f"[{iii}/{len(config)}]-[{ii}/150] layer={_n}, lossx1000={loss:.4f}, static={scale:.4f}, "
+            #       "calib_size={calib_size}")
+        static_best_dict[_n] = float(static_best)#round(float(static_best),4)
+        load_static(model=net0,layername=_n,static=static_best)
         # static ---------------------------------------#
-        static_best = 0.0
-        print("*"*80)
+        # static_best = 0.0
+        # print("*"*80)
         
         # noise ---------------------------------------#
         noise = torch.rand(size=(1,w_sim.size(-1))).type_as(w_sim)
@@ -129,23 +150,33 @@ def test_all(name, cfg_modifier=lambda x: x, calib_size=32, config_name="PTQ4ViT
         fixed_noise_dict[_n] = noise.clone()
         loss_lowest = 999999
         scale_best = 0.
-        for ii in range(150):
+        for ii in range(201):
             scale = ii/100.*a_interval
             x_sim=module0.quant_input(input + noise*scale+static_best)
             out=F.linear(x_sim - noise*scale-static_best, w_sim, bias_sim)
-            loss = (criterion(out, output_fp)*1000).detach().cpu()
+            # import ipdb; ipdb.set_trace()
+            if args.metric=="mse":
+                loss = (criterion(out, output_fp)*1000).detach().cpu()
+            else:
+                loss = (raw_grad * (output_fp - out)) ** 2
+                loss = loss.mean()
+            # loss = (raw_grad * (output_fp - out)) ** 2
+            # loss = loss.mean()
+            # loss = (criterion(out, output_fp)*1000).detach().cpu()
             if loss<loss_lowest:
                 loss_lowest = loss
                 scale_best = scale
-            print(f"[{iii}/{len(config)}]-[{ii}/150] layer={_n}, lossx1000={loss:.4f}, noise={scale:.4f}, calib_size={calib_size}")
-        noise_best_dict[_n] = round(float(scale_best),4)
+            # print(f"[{iii}/{len(config)}]-[{ii}/150] layer={_n}, loss={loss:.4e}, noise={scale:.4f}, calib_size={calib_size}")
+        noise_best_dict[_n] = float(scale_best)#round(float(scale_best),4)
         load_noise(model=net0,layername=_n,noiseScale=scale_best,noise=noise)
         # noise ---------------------------------------#
-        print("\'static_best_dict\':",static_best_dict)
-        print("\'noise_best_dict\':",noise_best_dict)
-        print("-"*20,f"[{iii}/{len(config)}] layer={_n}, scale_best={scale_best:.4f}, calib_acc={acc*100:.2f}")
+        # print("\'static_best_dict\':",static_best_dict)
+        # print("\'noise_best_dict\':",noise_best_dict)
+        print("-"*20,f"[{iii}/{len(config)}] layer={_n}, noise_best={scale_best:.4f}, calib_acc={acc*100:.2f}")
         h.remove()
-    import ipdb; ipdb.set_trace()
+    print("\'static_best_dict\':",static_best_dict)
+    print("\'noise_best_dict\':",noise_best_dict)
+    # import ipdb; ipdb.set_trace()
     
     
     # --------------------
@@ -230,6 +261,7 @@ if __name__=='__main__':
     args = parse_args()
 
     names = [
+        args.model,
         # "vit_tiny_patch16_224",
         # "vit_small_patch32_224",
         "vit_small_patch16_224",
@@ -237,11 +269,11 @@ if __name__=='__main__':
         # "vit_base_patch16_384",
         #
         # "deit_tiny_patch16_224",
-        # "deit_small_patch16_224",
+        "deit_small_patch16_224",
         # "deit_base_patch16_224",
         # "deit_base_patch16_384",
         #
-        # "swin_tiny_patch4_window7_224",
+        "swin_tiny_patch4_window7_224",
         # "swin_small_patch4_window7_224",
         # "swin_base_patch4_window7_224",
         # "swin_base_patch4_window12_384",
@@ -249,11 +281,12 @@ if __name__=='__main__':
     metrics = ["hessian"]
     linear_ptq_settings = [(1,1,1)] # n_V, n_H, n_a
     # calib_sizes = [32,128]
-    calib_sizes = [128]
+    calib_sizes = [args.calib_num]
     # bit_settings = [(8,8), (6,6)] # weight, activation
     bit_settings = [(6,6)] # weight, activation
     # config_names = ["PTQ4ViT", "BasePTQ"]
-    config_names = ["PTQ4ViT"]
+    linear_type = {"linear":"BasePTQ", "nonlinear":"PTQ4ViT"}
+    config_names = [linear_type[args.method]]
 
     cfg_list = []
     for name, metric, linear_ptq_setting, calib_size, bit_setting, config_name in \
